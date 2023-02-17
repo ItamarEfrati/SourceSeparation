@@ -9,8 +9,8 @@ from tqdm import tqdm
 class SpectrogramDataset(Dataset):
     def __init__(self, data_path, spec_info, stft_frames, stft_stride):
         self.data_path = data_path
-        self.mix_path = os.path.join(data_path, "mix")
-        self.vox_path = os.path.join(data_path, "vox")
+        self.mix_path = os.path.join(data_path, "spec_mix")
+        self.vox_path = os.path.join(data_path, "spec_vox")
         self.stft_frames = stft_frames
         self.stft_stride = stft_stride
         self.offset = stft_frames // 2
