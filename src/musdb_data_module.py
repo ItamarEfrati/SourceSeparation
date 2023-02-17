@@ -59,8 +59,4 @@ class MUSDBDataModule(pl.LightningDataModule):
                           collate_fn=lambda b: basic_collate(b, self.hparams.test_mask_threshold))
 
 
-if __name__ == '__main__':
-    d = MUSDBDataModule()
-    d.setup()
-    t_d = d.train_dataloader()
-    print(1)
+
