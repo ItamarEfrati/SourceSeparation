@@ -1,10 +1,12 @@
 from io import BytesIO
+from typing import Any, Union, Dict
 
 import numpy as np
 import torch
 import torchvision
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import TensorBoardLogger
+from torch import Tensor
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -36,8 +38,10 @@ def get_spec_fig(spec,
 class LogVocalSeparationGridCallback(pl.Callback):
     def __init__(self, data_module: MUSDBDataModule,
                  training_spectrogram_id: int = 16,
-                 every_n_epochs: int = 1):
+                 every_n_epochs: int = 1,
+                 every_n_steps: int = 1000):
         super().__init__()
+        data_module.setup()
         train_dataset = data_module.train_data
         self.filtered_dataset = copy.deepcopy(train_dataset)
 
@@ -50,6 +54,7 @@ class LogVocalSeparationGridCallback(pl.Callback):
 
         # Only save those images every N epochs (otherwise tensorboard gets quite large)
         self.every_n_epochs = every_n_epochs
+        self.every_n_steps = every_n_steps
 
     def add_images_to_tensor_board(self, trainer, masked_spectrogram):
         convert_tensor = transforms.ToTensor()
@@ -100,12 +105,22 @@ class LogVocalSeparationGridCallback(pl.Callback):
         mask = full_mask > threshold_value
         full_mask[mask] = 1.
         full_mask[~mask] = 0.
-        masked_spectrogram = full_mask * self.specific_mix_spectrogram_array[:, 25:]
+        masked_spectrogram = full_mask * self.specific_mix_spectrogram_array[:, self.filtered_dataset.stft_frames:]
 
         return masked_spectrogram
 
     def on_train_epoch_end(self, trainer, pl_module):
         if trainer.current_epoch % self.every_n_epochs == 0:
+            pl_module.eval()
+
+            masked_spectrogram = self.get_masked_spectrogram(pl_module)
+            self.add_images_to_tensor_board(trainer, masked_spectrogram)
+
+            pl_module.train()
+
+    def on_train_batch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule",
+                           outputs: Union[Tensor, Dict[str, Any]], batch: Any, batch_idx: int):
+        if batch_idx % self.every_n_steps == 0:
             pl_module.eval()
 
             masked_spectrogram = self.get_masked_spectrogram(pl_module)
