@@ -14,8 +14,8 @@ import requests
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.spectorgram_dataset import SpectrogramDataset, basic_collate
-from src.utils.audio import spectrogram, get_wav_slices, save_wav
+from spectorgram_dataset import SpectrogramDataset, basic_collate, MyCollator
+from utils.audio import spectrogram, get_wav_slices, save_wav
 
 REGULAR_URL = 'https://zenodo.org/record/1117372/files/musdb18.zip?download=1'
 HQ_URL = 'https://zenodo.org/record/3338373/files/musdb18hq.zip?download=1'
@@ -207,13 +207,16 @@ class MUSDBDataModule(pl.LightningDataModule):
                                             self.hparams.stft_stride)
 
     def train_dataloader(self):
-        return DataLoader(self.train_data, batch_size=self.hparams.batch_size,
-                          collate_fn=lambda b: basic_collate(b, self.hparams.train_mask_threshold))
+        my_collator = MyCollator(self.hparams.train_mask_threshold)
+        return DataLoader(self.train_data, batch_size=self.hparams.batch_size, num_workers=4,
+                          collate_fn=my_collator)
 
     def val_dataloader(self):
-        return DataLoader(self.val_data, batch_size=self.hparams.batch_size,
-                          collate_fn=lambda b: basic_collate(b, self.hparams.train_mask_threshold))
+        my_collator = MyCollator(self.hparams.train_mask_threshold)
+        return DataLoader(self.train_data, batch_size=self.hparams.batch_size, num_workers=4,
+                          collate_fn=my_collator)
 
     def test_dataloader(self):
-        return DataLoader(self.test_data, batch_size=self.hparams.batch_size,
-                          collate_fn=lambda b: basic_collate(b, self.hparams.test_mask_threshold))
+        my_collator = MyCollator(self.hparams.train_mask_threshold)
+        return DataLoader(self.test_data, batch_size=self.hparams.batch_size, num_workers=4,
+                          collate_fn=my_collator)

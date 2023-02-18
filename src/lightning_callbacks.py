@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from musdb_data_module import MUSDBDataModule
-from spectorgram_dataset import SpectrogramDataset, basic_collate
+from spectorgram_dataset import SpectrogramDataset, basic_collate, MyCollator
 import copy
 import librosa
 import matplotlib.pyplot as plt
@@ -90,8 +90,9 @@ class LogVocalSeparationGridCallback(pl.Callback):
     def get_masked_spectrogram(self,
                                pl_module,
                                threshold_value: float = 0.5):
+        my_collator = MyCollator(threshold_value)
         data_loader = DataLoader(self.filtered_dataset, batch_size=512,
-                                 collate_fn=lambda b: basic_collate(b, threshold_value), pin_memory=True)
+                                 collate_fn=my_collator, pin_memory=True)
         batch = []
 
         with torch.no_grad():
