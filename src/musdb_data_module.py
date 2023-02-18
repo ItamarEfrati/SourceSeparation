@@ -23,7 +23,7 @@ HQ_URL = 'https://zenodo.org/record/3338373/files/musdb18hq.zip?download=1'
 
 class MUSDBDataModule(pl.LightningDataModule):
     def __init__(self,
-                 data_dir: str = "data\musdb18",
+                 data_dir: str = "..\data\musdb18",
                  download_url=REGULAR_URL,
                  num_workers=14,
                  original_sample_rate=44100,
@@ -38,7 +38,7 @@ class MUSDBDataModule(pl.LightningDataModule):
                  stft_frames=25,
                  stft_stride=1,
                  train_length=1024,
-                 batch_size: int = 32,
+                 batch_size: int = 512,
                  train_mask_threshold=0.5,
                  test_mask_threshold=0.1):
         super().__init__()
@@ -164,9 +164,9 @@ class MUSDBDataModule(pl.LightningDataModule):
     # endregion
 
     def prepare_data(self) -> None:
-        self._init_dirs()
         if os.path.exists(os.path.join(self.hparams.data_dir, 'preprocess')):
             return
+        self._init_dirs()
         download = not os.path.exists(os.path.join(self.hparams.data_dir, 'train'))
         if download:
             self._download()
