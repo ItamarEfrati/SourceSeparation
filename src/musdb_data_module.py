@@ -191,6 +191,7 @@ class MUSDBDataModule(pl.LightningDataModule):
         self._create_slices_for_evaluation(test_tracks, 'test')
 
     def setup(self, stage: str = None):
+        self._init_dirs()
         with open(os.path.join(self.paths['train_path'], 'spec_info.pkl'), 'rb') as f:
             train_specs = pickle.load(f)
         with open(os.path.join(self.paths['val_path'], 'spec_info.pkl'), 'rb') as f:

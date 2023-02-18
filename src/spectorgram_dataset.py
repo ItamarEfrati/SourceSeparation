@@ -27,6 +27,28 @@ class SpectrogramDataset(Dataset):
                 metadata.append(slice_info)
         return metadata
 
+    def get_full_vocal_spectrogram(self, spec_id: int) -> np.ndarray:
+        spec_file_name = f"spec{spec_id:06d}.npy"
+        spec_array = np.load(os.path.join(self.vox_path, spec_file_name), mmap_mode='r')
+
+        return spec_array
+
+    def get_full_mix_spectrogram(self, spec_id: int) -> np.ndarray:
+        spec_file_name = f"spec{spec_id:06d}.npy"
+        spec_array = np.load(os.path.join(self.mix_path, spec_file_name), mmap_mode='r')
+
+        return spec_array
+
+    def get_all_spectrogram_slices(self, spec_id: int):
+        # if spec_id=16 then return 'spec000016'
+        spec_id = f"spec{spec_id:06d}"
+        all_slice_info = self.metadata
+
+        # If spec_id=16 return [('spec000016', 0, 25), ('spec000016', 1, 26), ('spec000016', 2, 27), ('spec000016', 3, 28)...]
+        relevant_slice_only = [s for s in all_slice_info if s[0] == spec_id]
+
+        return relevant_slice_only
+
     def __getitem__(self, index):
         slice_info = self.metadata[index]
         fname = slice_info[0] + ".npy"
@@ -34,6 +56,7 @@ class SpectrogramDataset(Dataset):
         j = slice_info[2]
         x = np.load(os.path.join(self.mix_path, fname), mmap_mode='r')[:, :, i:j]
         y = np.load(os.path.join(self.vox_path, fname), mmap_mode='r')[:, i + self.offset]
+
         return x, y
 
     def __len__(self):
@@ -48,5 +71,6 @@ def basic_collate(batch, mask_threshold):
     y = np.stack(y)
     if mask_threshold is not None:
         y = y > mask_threshold
+
     y = torch.FloatTensor(y.astype(np.float32))
     return x, y
