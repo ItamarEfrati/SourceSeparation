@@ -7,45 +7,45 @@ from tqdm import tqdm
 
 
 class SpectrogramDataset(Dataset):
-    def __init__(self, data_path, spec_info, stft_frames, stft_stride):
+    def __init__(self, data_path, spectrogram_info, stft_frames, stft_stride):
         self.data_path = data_path
         self.mix_path = os.path.join(data_path, "spec_mix")
         self.vox_path = os.path.join(data_path, "spec_vox")
         self.stft_frames = stft_frames
         self.stft_stride = stft_stride
         self.offset = stft_frames // 2
-        self.metadata = self.get_slices(spec_info)
+        self.metadata = self.get_slices(spectrogram_info)
 
-    def get_slices(self, spec_info):
+    def get_slices(self, spectrogram_info):
         metadata = []
         print("Preparing dataset")
-        for spec in tqdm(spec_info):
-            size = spec[1] - self.stft_frames
+        for spectrogram in tqdm(spectrogram_info):
+            size = spectrogram[1] - self.stft_frames
             for i in range(0, size, self.stft_stride):
                 j = i + self.stft_frames
-                slice_info = (spec[0], i, j)
+                slice_info = (spectrogram[0], i, j)
                 metadata.append(slice_info)
         return metadata
 
-    def get_full_vocal_spectrogram(self, spec_id: int) -> np.ndarray:
-        spec_file_name = f"spec{spec_id:06d}.npy"
-        spec_array = np.load(os.path.join(self.vox_path, spec_file_name), mmap_mode='r')
+    def get_full_vocal_spectrogram(self, spectrogram_id: int) -> np.ndarray:
+        spectrogram_file_name = f"spec{spectrogram_id:06d}.npy"
+        spectrogram_array = np.load(os.path.join(self.vox_path, spectrogram_file_name), mmap_mode='r')
 
-        return spec_array
+        return spectrogram_array
 
-    def get_full_mix_spectrogram(self, spec_id: int) -> np.ndarray:
-        spec_file_name = f"spec{spec_id:06d}.npy"
-        spec_array = np.load(os.path.join(self.mix_path, spec_file_name), mmap_mode='r')
+    def get_full_mix_spectrogram(self, spectrogram_id: int) -> np.ndarray:
+        spectrogram_file_name = f"spec{spectrogram_id:06d}.npy"
+        spectrogram_array = np.load(os.path.join(self.mix_path, spectrogram_file_name), mmap_mode='r')
 
-        return spec_array
+        return spectrogram_array
 
-    def get_all_spectrogram_slices(self, spec_id: int):
+    def get_all_spectrogram_slices(self, spectrogram_id: int):
         # if spec_id=16 then return 'spec000016'
-        spec_id = f"spec{spec_id:06d}"
+        spectrogram_id = f"spec{spectrogram_id:06d}"
         all_slice_info = self.metadata
 
         # If spec_id=16 return [('spec000016', 0, 25), ('spec000016', 1, 26), ('spec000016', 2, 27), ('spec000016', 3, 28)...]
-        relevant_slice_only = [s for s in all_slice_info if s[0] == spec_id]
+        relevant_slice_only = [s for s in all_slice_info if s[0] == spectrogram_id]
 
         return relevant_slice_only
 

@@ -14,7 +14,7 @@ import requests
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from spectorgram_dataset import SpectrogramDataset, basic_collate, MyCollator
+from spectorgram_dataset import SpectrogramDataset, MyCollator
 from utils.audio import spectrogram, get_wav_slices, save_wav
 
 REGULAR_URL = 'https://zenodo.org/record/1117372/files/musdb18.zip?download=1'
@@ -102,14 +102,14 @@ class MUSDBDataModule(pl.LightningDataModule):
                                mel_freqs=self.hparams.mel_freqs,
                                min_level_db=self.hparams.min_level_db)[0]
 
-        spec_id = f"spec{idx:06d}"
-        L.append((spec_id, mix_spec.shape[2]))
-        np.save(os.path.join(mixture_path, spec_id + ".npy"), mix_spec)
-        np.save(os.path.join(vocal_path, spec_id + ".npy"), vox_spec)
+        spectrogram_id = f"spec{idx:06d}"
+        L.append((spectrogram_id, mix_spec.shape[2]))
+        np.save(os.path.join(mixture_path, spectrogram_id + ".npy"), mix_spec)
+        np.save(os.path.join(vocal_path, spectrogram_id + ".npy"), vox_spec)
 
     def _create_spectrogram(self, tracks, mix_path, vox_path, save_path):
         with Manager() as manager:
-            spec_info = manager.list()
+            spectrogram_info = manager.list()
             processes = []
             for idx, track in enumerate(tqdm(tracks)):
                 if len(processes) >= self.hparams.num_workers:
@@ -117,16 +117,16 @@ class MUSDBDataModule(pl.LightningDataModule):
                         p.join()
                     processes = []
 
-                p = Process(target=self._generate_specs, args=(spec_info, track, idx, mix_path, vox_path))
+                p = Process(target=self._generate_specs, args=(spectrogram_info, track, idx, mix_path, vox_path))
                 p.start()
                 processes.append(p)
             if len(processes) > 0:
                 for p in processes:
                     p.join()
-            spec_info = list(spec_info)
+            spectrogram_info = list(spectrogram_info)
             with open(save_path, 'wb') as f:
-                random.shuffle(spec_info)
-                pickle.dump(spec_info, f)
+                random.shuffle(spectrogram_info)
+                pickle.dump(spectrogram_info, f)
 
     def _create_slices_for_evaluation(self, tracks, stage):
         print(f"slicing {stage} samples")
@@ -208,15 +208,15 @@ class MUSDBDataModule(pl.LightningDataModule):
 
     def train_dataloader(self):
         my_collator = MyCollator(self.hparams.train_mask_threshold)
-        return DataLoader(self.train_data, batch_size=self.hparams.batch_size, num_workers=4,
+        return DataLoader(self.train_data, batch_size=self.hparams.batch_size, num_workers=10, shuffle=True,
                           collate_fn=my_collator)
 
     def val_dataloader(self):
         my_collator = MyCollator(self.hparams.train_mask_threshold)
-        return DataLoader(self.train_data, batch_size=self.hparams.batch_size, num_workers=4,
+        return DataLoader(self.train_data, batch_size=self.hparams.batch_size, num_workers=6,
                           collate_fn=my_collator)
 
     def test_dataloader(self):
         my_collator = MyCollator(self.hparams.train_mask_threshold)
-        return DataLoader(self.test_data, batch_size=self.hparams.batch_size, num_workers=4,
+        return DataLoader(self.test_data, batch_size=self.hparams.batch_size, num_workers=2,
                           collate_fn=my_collator)
