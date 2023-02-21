@@ -54,6 +54,8 @@ class MUSDBDataModule(pl.LightningDataModule):
         self.paths['train_path'] = os.path.join(output_dir, "train")
         self.paths['train_spect_mixture_path'] = os.path.join(self.paths['train_path'], "spec_mix")
         self.paths['train_spect_vocal_path'] = os.path.join(self.paths['train_path'], "spec_vox")
+        self.paths['train_wav_mix_path'] = os.path.join(self.paths['train_path'], "wav_mix")
+        self.paths['train_wav_vox_path'] = os.path.join(self.paths['train_path'], "wav_vox")g
         self.paths['val_path'] = os.path.join(output_dir, "val")
         self.paths['val_spect_mixture_path'] = os.path.join(self.paths['val_path'], "spec_mix")
         self.paths['val_spect_vocal_path'] = os.path.join(self.paths['val_path'], "spec_vox")
@@ -67,10 +69,16 @@ class MUSDBDataModule(pl.LightningDataModule):
         for k, v in self.paths.items():
             os.makedirs(v, exist_ok=True)
 
+    def _pad_audio(self, audio, sr):
+        hop_len = (sr // self.hparams.original_sample_rate) * self.hparams.hop_size
+        left_over = hop_len - audio.shape[0] % hop_len
+        return np.pad(audio, (0, left_over), 'constant', constant_values=0)
+
     def _load_sample(self, track):
         audio = track.audio
 
         audio = librosa.to_mono(audio.T)
+        audio = self._pad_audio(audio, self.hparams.original_sample_rate)
         if self.hparams.original_sample_rate != self.hparams.sample_rate:
             audio = librosa.resample(audio, orig_sr=self.hparams.original_sample_rate,
                                      target_sr=self.hparams.sample_rate)
@@ -187,6 +195,7 @@ class MUSDBDataModule(pl.LightningDataModule):
         self._create_spectrogram(test_tracks, self.paths['test_spect_mixture_path'],
                                  self.paths['test_spect_vocal_path'], test_info_path)
 
+        self._create_slices_for_evaluation(train_tracks, 'train')
         self._create_slices_for_evaluation(val_tracks, 'val')
         self._create_slices_for_evaluation(test_tracks, 'test')
 

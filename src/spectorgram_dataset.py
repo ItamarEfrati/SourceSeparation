@@ -57,7 +57,7 @@ class SpectrogramDataset(Dataset):
         x = np.load(os.path.join(self.mix_path, fname), mmap_mode='r')[:, :, i:j]
         y = np.load(os.path.join(self.vox_path, fname), mmap_mode='r')[:, i + self.offset]
 
-        return x, y
+        return slice_info[0], x, y
 
     def __len__(self):
         return len(self.metadata)
@@ -78,16 +78,3 @@ class MyCollator(object):
 
         y = torch.FloatTensor(y.astype(np.float32))
         return x, y
-
-
-# def basic_collate(batch, mask_threshold):
-#     x = [it[0] for it in batch]
-#     x = np.stack(x).astype(np.float32)
-#     x = torch.FloatTensor(x)
-#     y = [it[1] for it in batch]
-#     y = np.stack(y)
-#     if mask_threshold is not None:
-#         y = y > mask_threshold
-#
-#     y = torch.FloatTensor(y.astype(np.float32))
-#     return x, y
