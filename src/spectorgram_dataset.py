@@ -68,13 +68,14 @@ class MyCollator(object):
         self.mask_threshold = mask_threshold
 
     def __call__(self, batch):
-        x = [it[0] for it in batch]
+        ids = [it[0] for it in batch]
+        x = [it[1] for it in batch]
         x = np.stack(x).astype(np.float32)
         x = torch.FloatTensor(x)
-        y = [it[1] for it in batch]
+        y = [it[2] for it in batch]
         y = np.stack(y)
         if self.mask_threshold is not None:
             y = y > self.mask_threshold
 
         y = torch.FloatTensor(y.astype(np.float32))
-        return x, y
+        return ids, x, y
