@@ -1,3 +1,4 @@
+import os
 from io import BytesIO
 from typing import Any, Union, Dict
 
@@ -11,7 +12,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from musdb_data_module import MUSDBDataModule
-from spectorgram_dataset import SpectrogramDataset, basic_collate, MyCollator
+from spectorgram_dataset import SpectrogramDataset, MyCollator
 import copy
 import librosa
 import matplotlib.pyplot as plt
@@ -19,6 +20,8 @@ import librosa.display
 
 from torchvision import transforms
 from PIL import Image
+
+from utils.audio import spectrogram, inv_spectrogram
 
 
 def get_spec_fig(spec,
@@ -31,37 +34,55 @@ def get_spec_fig(spec,
     buf = BytesIO()
     fig.savefig(buf, format='png')
     buf.seek(0)
-
+    plt.close()
     return buf
 
 
 class LogVocalSeparationGridCallback(pl.Callback):
-    def __init__(self, data_module: MUSDBDataModule,
-                 training_spectrogram_id: int = 16,
-                 every_n_epochs: int = 1,
-                 every_n_steps: int = 1000):
+    def __init__(self):
         super().__init__()
-        data_module.setup()
-        train_dataset = data_module.train_data
-        self.filtered_dataset = copy.deepcopy(train_dataset)
+        self.data_dir = '../data/musdb18/preprocess'
+        self.train_spec = os.listdir(rf'{self.data_dir}/train/spec_mix')[0]
+        self.val_spec = os.listdir(rf'{self.data_dir}/val/spec_mix')[0]
+        self.test_spec = os.listdir(rf'{self.data_dir}/test/spec_mix')[0]
 
-        self.specific_mix_spectrogram_array = torch.tensor(train_dataset.get_full_mix_spectrogram(training_spectrogram_id).squeeze(0))
-        self.specific_vocal_spectrogram_array = torch.tensor(train_dataset.get_full_vocal_spectrogram(training_spectrogram_id))
-        metadata_arr = np.array(data_module.train_data.metadata)
-        spec_id_indices = np.argwhere(metadata_arr[:, 0] == f"spec{training_spectrogram_id:06d}").reshape(-1)
-        filtered_metadata = [(t[0], int(t[1]), int(t[2])) for t in map(tuple, metadata_arr[spec_id_indices])]
-        self.filtered_dataset.metadata = filtered_metadata
+    def _load_specs(self, stage):
+        spec = self.train_spec
+        if stage == 'val':
+            spec = self.val_spec
+        if stage == 'test':
+            spec = self.test_spec
+        mel_spec_mix = np.load(os.path.join(self.data_dir, f'{stage}/spec_mix', spec), mmap_mode='r')
+        mel_spec_vox = np.load(os.path.join(self.data_dir, f'{stage}/spec_vox', spec), mmap_mode='r')
 
-        # Only save those images every N epochs (otherwise tensorboard gets quite large)
-        self.every_n_epochs = every_n_epochs
-        self.every_n_steps = every_n_steps
+        return mel_spec_mix, mel_spec_vox
 
-    def add_images_to_tensor_board(self, trainer, masked_spectrogram):
+    @torch.no_grad()
+    def _get_mask(self, mel_spec, pl_module, threshold=0.5):
+        padding = pl_module.hparams.stft_frames // 2
+        mel_spec = np.pad(mel_spec, ((0, 0), (padding, padding)), 'constant', constant_values=0)
+        window = pl_module.hparams.stft_frames
+        size = mel_spec.shape[1]
+        mask = []
+        end = size - window
+        for i in tqdm(range(0, end + 1, pl_module.hparams.reconstruction_batch_size)):
+            x = [mel_spec[:, j:j + window] for j in range(i, i + pl_module.hparams.reconstruction_batch_size) if
+                 j <= end]
+            x = np.stack(x)
+            _x = torch.FloatTensor(x[:, np.newaxis, :, :]).to(pl_module.device)
+            _y = pl_module.forward(_x)
+            y = _y.to(torch.device('cpu')).detach().numpy()
+            mask += [y[j] for j in range(y.shape[0])]
+        mask = np.vstack(mask).T
+        return mask > threshold
+
+    @staticmethod
+    def add_images_to_tensor_board(trainer, mel_spec_mix, mel_spec_vox, masked_spectrogram, stage):
         convert_tensor = transforms.ToTensor()
         original_spec = convert_tensor(
             Image.open(
                 get_spec_fig(
-                    spec=self.specific_mix_spectrogram_array.numpy(),
+                    spec=mel_spec_mix,
                     title="Mixture"
                 )
             )
@@ -69,7 +90,7 @@ class LogVocalSeparationGridCallback(pl.Callback):
         vocal_spec = convert_tensor(
             Image.open(
                 get_spec_fig(
-                    spec=self.specific_vocal_spectrogram_array.numpy(),
+                    spec=mel_spec_vox,
                     title="Vocal True"
                 )
             )
@@ -77,7 +98,7 @@ class LogVocalSeparationGridCallback(pl.Callback):
         predicted_vocal_spec = convert_tensor(
             Image.open(
                 get_spec_fig(
-                    spec=masked_spectrogram.numpy(),
+                    spec=masked_spectrogram,
                     title="Vocal Predicted"
                 )
             )
@@ -85,46 +106,143 @@ class LogVocalSeparationGridCallback(pl.Callback):
 
         imgs = torch.stack([original_spec, vocal_spec, predicted_vocal_spec])
         grid = torchvision.utils.make_grid(imgs, nrow=3)
-        trainer.logger.experiment.add_image("Vocal Separation", grid, global_step=trainer.global_step)
+        trainer.logger.experiment.add_image(f"{stage} Vocal Separation", grid, global_step=trainer.global_step)
 
-    def get_masked_spectrogram(self,
-                               pl_module,
-                               threshold_value: float = 0.5):
-        my_collator = MyCollator(threshold_value)
-        data_loader = DataLoader(self.filtered_dataset, batch_size=512,
-                                 collate_fn=my_collator, pin_memory=True)
-        batch = []
-
-        with torch.no_grad():
-            # Reconstruct images
-            for x, y in tqdm(data_loader):
-                predicted_mask = pl_module(x)
-
-                batch.append(predicted_mask)
-
-        full_mask = torch.sigmoid(torch.vstack(batch).T)
+    def _get_masked_spectrogram(self,
+                                mel_spec_mix,
+                                pl_module,
+                                threshold_value: float = 0.5):
+        full_mask = self._get_mask(mel_spec_mix, pl_module)
         mask = full_mask > threshold_value
         full_mask[mask] = 1.
         full_mask[~mask] = 0.
-        masked_spectrogram = full_mask * self.specific_mix_spectrogram_array[:, self.filtered_dataset.stft_frames:]
+        masked_spectrogram = full_mask * mel_spec_mix
 
         return masked_spectrogram
 
     def on_train_epoch_end(self, trainer, pl_module):
-        if trainer.current_epoch % self.every_n_epochs == 0:
-            pl_module.eval()
-
-            masked_spectrogram = self.get_masked_spectrogram(pl_module)
-            self.add_images_to_tensor_board(trainer, masked_spectrogram)
-
+        is_training = pl_module.training
+        pl_module.eval()
+        mel_spec_mix, mel_spec_vox = self._load_specs('train')
+        mel_spec_mix = mel_spec_mix.squeeze(0)
+        masked_spectrogram = self._get_masked_spectrogram(mel_spec_mix, pl_module)
+        self.add_images_to_tensor_board(trainer, mel_spec_mix, mel_spec_vox, masked_spectrogram, 'train')
+        if is_training:
             pl_module.train()
 
-    def on_train_batch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule",
-                           outputs: Union[Tensor, Dict[str, Any]], batch: Any, batch_idx: int):
-        if batch_idx % self.every_n_steps == 0:
-            pl_module.eval()
+    def on_validation_epoch_end(self, trainer, pl_module):
+        is_training = pl_module.training
+        pl_module.eval()
+        mel_spec_mix, mel_spec_vox = self._load_specs('val')
+        mel_spec_mix = mel_spec_mix.squeeze(0)
+        masked_spectrogram = self._get_masked_spectrogram(mel_spec_mix, pl_module)
+        self.add_images_to_tensor_board(trainer, mel_spec_mix, mel_spec_vox, masked_spectrogram, 'val')
+        if is_training:
+            pl_module.train()
 
-            masked_spectrogram = self.get_masked_spectrogram(pl_module)
-            self.add_images_to_tensor_board(trainer, masked_spectrogram)
+    def on_test_epoch_end(self, trainer, pl_module):
+        is_training = pl_module.training
+        pl_module.eval()
+        mel_spec_mix, mel_spec_vox = self._load_specs('test')
+        mel_spec_mix = mel_spec_mix.squeeze(0)
+        masked_spectrogram = self._get_masked_spectrogram(mel_spec_mix, pl_module)
+        self.add_images_to_tensor_board(trainer, mel_spec_mix, mel_spec_vox, masked_spectrogram, 'test')
+        if is_training:
+            pl_module.train()
 
+
+class LogAudio(pl.Callback):
+    def __init__(self, every_n_epochs: int = 5):
+        super().__init__()
+
+        # Only save those images every N epochs (otherwise tensorboard gets quite large)
+        self.every_n_epochs = every_n_epochs
+        self.data_dir = '..\data\musdb18\preprocess'
+        self.train_track = os.listdir(rf'{self.data_dir}\train\wav_mix')[0]
+        self.val_track = os.listdir(rf'{self.data_dir}\val\wav_mix')[0]
+        self.test_track = os.listdir(rf'{self.data_dir}\test\wav_mix')[0]
+
+    def _load_wavs(self, stage, pl_module):
+        track = self.train_track
+        if stage == 'val':
+            track = self.val_track
+        if stage == 'test':
+            track = self.test_track
+        wav, sr = librosa.load(os.path.join(self.data_dir, f'{stage}\wav_mix', track),
+                               sr=pl_module.hparams.sample_rate)
+
+        vox, sr = librosa.load(os.path.join(self.data_dir, f'{stage}\wav_vox', track),
+                               sr=pl_module.hparams.sample_rate)
+        return wav, vox
+
+    @torch.no_grad()
+    def _get_mask(self, wav, pl_module, threshold=0.5):
+        _mel_spec, stft = spectrogram(wav,
+                                      power=pl_module.hparams.mix_power_factor,
+                                      hop_size=pl_module.hparams.hop_size,
+                                      fft_size=pl_module.hparams.fft_size,
+                                      fmin=pl_module.hparams.fmin,
+                                      ref_level_db=pl_module.hparams.ref_level_db,
+                                      mel_freqs=pl_module.hparams.mel_freqs,
+                                      min_level_db=pl_module.hparams.min_level_db)
+
+        padding = pl_module.hparams.stft_frames // 2
+        mel_spec = np.pad(_mel_spec, ((0, 0), (padding, padding)), 'constant', constant_values=0)
+        window = pl_module.hparams.stft_frames
+        size = mel_spec.shape[1]
+        mask = []
+        end = size - window
+        for i in tqdm(range(0, end + 1, pl_module.hparams.reconstruction_batch_size)):
+            x = [mel_spec[:, j:j + window] for j in range(i, i + pl_module.hparams.reconstruction_batch_size) if
+                 j <= end]
+            x = np.stack(x)
+            _x = torch.FloatTensor(x[:, np.newaxis, :, :]).to(pl_module.device)
+            _y = pl_module.forward(_x)
+            y = _y.to(torch.device('cpu')).detach().numpy()
+            mask += [y[j] for j in range(y.shape[0])]
+        mask = np.vstack(mask).T
+        return mask > threshold, stft
+
+    def _log_audio(self, pl_module, trainer, stage):
+
+        wav, vox = self._load_wavs(stage=stage, pl_module=pl_module)
+
+        vox_mask, stft = self._get_mask(wav, pl_module)
+
+        estimates = inv_spectrogram(stft * vox_mask, pl_module.hparams.hop_size)
+        original = librosa.istft(stft, hop_length=pl_module.hparams.hop_size)
+        if pl_module.hparams.original_sample_rate != pl_module.hparams.sample_rate:
+            estimates = librosa.resample(estimates, orig_sr=pl_module.hparams.sample_rate,
+                                         target_sr=pl_module.hparams.original_sample_rate)
+            original = librosa.resample(original, orig_sr=pl_module.hparams.sample_rate,
+                                        target_sr=pl_module.hparams.original_sample_rate)
+            vox = librosa.resample(vox, orig_sr=pl_module.hparams.sample_rate,
+                                   target_sr=pl_module.hparams.original_sample_rate)
+
+        trainer.logger.experiment.add_audio(f'{stage} target vocal', vox, trainer.global_step,
+                                            pl_module.hparams.original_sample_rate)
+        trainer.logger.experiment.add_audio(f'{stage} target mix', original, trainer.global_step,
+                                            pl_module.hparams.original_sample_rate)
+        trainer.logger.experiment.add_audio(f'{stage} predicted vocal', estimates, trainer.global_step,
+                                            pl_module.hparams.original_sample_rate)
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        is_training = pl_module.training
+        pl_module.eval()
+        self._log_audio(pl_module, trainer, stage='train')
+        if is_training:
+            pl_module.train()
+
+    def on_validation_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
+        is_training = pl_module.training
+        pl_module.eval()
+        self._log_audio(pl_module, trainer, stage='val')
+        if is_training:
+            pl_module.train()
+
+    def on_test_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
+        is_training = pl_module.training
+        pl_module.eval()
+        self._log_audio(pl_module, trainer, stage='test')
+        if is_training:
             pl_module.train()

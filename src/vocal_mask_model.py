@@ -1,5 +1,7 @@
 from typing import Any
 
+import librosa
+import musdb
 import numpy as np
 import torch
 import torch.optim as optim
@@ -7,6 +9,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import pytorch_lightning as pl
+import torchaudio
+from musdb import MultiTrack
+from tqdm import tqdm
+
+from utils.audio import spectrogram, inv_spectrogram, save_wav
 
 
 class Conv3x3(nn.Module):
@@ -71,8 +78,22 @@ class VocalMask(nn.Module):
 
 
 class LitVocalMask(pl.LightningModule):
-    def __init__(self, vocal_mask_model: VocalMask):
+    def __init__(self,
+                 vocal_mask_model: VocalMask,
+                 original_sample_rate=44100,
+                 sample_rate=22050,
+                 mix_power_factor=2,
+                 hop_size=256,
+                 fft_size=1024,
+                 fmin=20,
+                 ref_level_db=20,
+                 mel_freqs=None,
+                 min_level_db=-100,
+                 stft_frames=25,
+                 stft_stride=1,
+                 reconstruction_batch_size=512):
         super().__init__()
+        self.save_hyperparameters(ignore=['vocal_mask_model'])
         self.vocal_mask_model = vocal_mask_model
 
     def forward(self, x):
@@ -87,20 +108,57 @@ class LitVocalMask(pl.LightningModule):
 
         return mask_logits
 
-    def training_step(self, batch):
+    def configure_optimizers(self):
+        optimizer = optim.AdamW(self.parameters(), lr=1e-3, weight_decay=0.3)
+
+        return optimizer
+
+    def training_step(self, batch, batch_idx):
         x_spectrogram, binary_mask_true = batch
 
         binary_mask_prediction = self(x_spectrogram)
         loss = F.binary_cross_entropy_with_logits(
             input=binary_mask_prediction,
-            target=binary_mask_true
+            target=binary_mask_true,
+            reduce=None
         )
+
+        loss = loss.mean()
 
         self.log("train_loss", loss)
 
         return loss
 
-    def configure_optimizers(self):
-        optimizer = optim.AdamW(self.parameters(), lr=1e-3)
+    def validation_step(self, batch, batch_idx):
+        x_spectrogram, binary_mask_true = batch
 
-        return optimizer
+        binary_mask_prediction = self(x_spectrogram)
+
+        loss = F.binary_cross_entropy_with_logits(
+            input=binary_mask_prediction,
+            target=binary_mask_true,
+            reduce=None
+        )
+
+        loss = loss.mean()
+
+        self.log("val_loss", loss)
+
+        return loss
+
+    def test_step(self, batch, batch_idx):
+        x_spectrogram, binary_mask_true = batch
+
+        binary_mask_prediction = self(x_spectrogram)
+
+        loss = F.binary_cross_entropy_with_logits(
+            input=binary_mask_prediction,
+            target=binary_mask_true,
+            reduce=None
+        )
+
+        loss = loss.mean()
+
+        self.log("test_loss", loss)
+
+        return loss

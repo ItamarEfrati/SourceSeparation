@@ -1,2 +1,4 @@
 /data/**/*
 /.idea/
+/src/lightning_logs/
+/lightning_logs/

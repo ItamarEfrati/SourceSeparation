@@ -7,18 +7,19 @@ from tqdm import tqdm
 
 
 class SpectrogramDataset(Dataset):
-    def __init__(self, data_path, spectrogram_info, stft_frames, stft_stride):
+    def __init__(self, data_path, spectrogram_info, stft_frames, stft_stride, stage):
         self.data_path = data_path
         self.mix_path = os.path.join(data_path, "spec_mix")
         self.vox_path = os.path.join(data_path, "spec_vox")
         self.stft_frames = stft_frames
         self.stft_stride = stft_stride
         self.offset = stft_frames // 2
-        self.metadata = self.get_slices(spectrogram_info)
+        self.metadata = self.get_slices(spectrogram_info, stage)
+        # self.spectrogram = self._load_spectrogram()
 
-    def get_slices(self, spectrogram_info):
+    def get_slices(self, spectrogram_info, stage):
         metadata = []
-        print("Preparing dataset")
+        print(f"Preparing {stage} dataset")
         for spectrogram in tqdm(spectrogram_info):
             size = spectrogram[1] - self.stft_frames
             for i in range(0, size, self.stft_stride):
@@ -40,11 +41,8 @@ class SpectrogramDataset(Dataset):
         return spectrogram_array
 
     def get_all_spectrogram_slices(self, spectrogram_id: int):
-        # if spec_id=16 then return 'spec000016'
         spectrogram_id = f"spec{spectrogram_id:06d}"
         all_slice_info = self.metadata
-
-        # If spec_id=16 return [('spec000016', 0, 25), ('spec000016', 1, 26), ('spec000016', 2, 27), ('spec000016', 3, 28)...]
         relevant_slice_only = [s for s in all_slice_info if s[0] == spectrogram_id]
 
         return relevant_slice_only
@@ -57,10 +55,20 @@ class SpectrogramDataset(Dataset):
         x = np.load(os.path.join(self.mix_path, fname), mmap_mode='r')[:, :, i:j]
         y = np.load(os.path.join(self.vox_path, fname), mmap_mode='r')[:, i + self.offset]
 
-        return slice_info[0], x, y
+        return x, y
 
     def __len__(self):
         return len(self.metadata)
+
+    # def _load_spectrogram(self):
+    #     spec_dict = {}
+    #     for root, dirs, files in os.walk(self.mix_path):
+    #         for file in files:
+    #             spec_dict[file] = {
+    #                 'x': np.load(os.path.join(self.mix_path, file), mmap_mode='r'),
+    #                 'y': np.load(os.path.join(self.vox_path, file), mmap_mode='r')
+    #             }
+    #     return spec_dict
 
 
 class MyCollator(object):
@@ -68,14 +76,13 @@ class MyCollator(object):
         self.mask_threshold = mask_threshold
 
     def __call__(self, batch):
-        ids = [it[0] for it in batch]
-        x = [it[1] for it in batch]
+        x = [it[0] for it in batch]
         x = np.stack(x).astype(np.float32)
         x = torch.FloatTensor(x)
-        y = [it[2] for it in batch]
+        y = [it[1] for it in batch]
         y = np.stack(y)
         if self.mask_threshold is not None:
             y = y > self.mask_threshold
 
         y = torch.FloatTensor(y.astype(np.float32))
-        return ids, x, y
+        return x, y

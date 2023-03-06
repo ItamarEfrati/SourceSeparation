@@ -25,7 +25,7 @@ class MUSDBDataModule(pl.LightningDataModule):
     def __init__(self,
                  data_dir: str = "..\data\musdb18",
                  download_url=REGULAR_URL,
-                 num_workers=14,
+                 num_workers=1,
                  original_sample_rate=44100,
                  sample_rate=22050,
                  mix_power_factor=2,
@@ -55,7 +55,7 @@ class MUSDBDataModule(pl.LightningDataModule):
         self.paths['train_spect_mixture_path'] = os.path.join(self.paths['train_path'], "spec_mix")
         self.paths['train_spect_vocal_path'] = os.path.join(self.paths['train_path'], "spec_vox")
         self.paths['train_wav_mix_path'] = os.path.join(self.paths['train_path'], "wav_mix")
-        self.paths['train_wav_vox_path'] = os.path.join(self.paths['train_path'], "wav_vox")g
+        self.paths['train_wav_vox_path'] = os.path.join(self.paths['train_path'], "wav_vox")
         self.paths['val_path'] = os.path.join(output_dir, "val")
         self.paths['val_spect_mixture_path'] = os.path.join(self.paths['val_path'], "spec_mix")
         self.paths['val_spect_vocal_path'] = os.path.join(self.paths['val_path'], "spec_vox")
@@ -76,7 +76,6 @@ class MUSDBDataModule(pl.LightningDataModule):
 
     def _load_sample(self, track):
         audio = track.audio
-
         audio = librosa.to_mono(audio.T)
         audio = self._pad_audio(audio, self.hparams.original_sample_rate)
         if self.hparams.original_sample_rate != self.hparams.sample_rate:
@@ -137,23 +136,17 @@ class MUSDBDataModule(pl.LightningDataModule):
                 pickle.dump(spectrogram_info, f)
 
     def _create_slices_for_evaluation(self, tracks, stage):
-        print(f"slicing {stage} samples")
-        i = 0
+        print(f"Generating wav examples for {stage}")
         for track in tqdm(tracks):
             mixture, vocal = self._load_samples(track)
-            slices = get_wav_slices(mixture, window=self.train_length, stride=self.train_length)
-            for j, k in slices:
-                # skip slices with no audio content
-                if np.sum(vocal[j:k]) == 0:
-                    continue
-                file_name = f"{i:06d}.wav"
-                save_wav(mixture[j:k],
-                         os.path.join(self.paths[f'{stage}_wav_mix_path'], file_name),
-                         sample_rate=self.hparams.original_sample_rate)
-                save_wav(vocal[j:k],
-                         os.path.join(self.paths[f'{stage}_wav_vox_path'], file_name),
-                         self.hparams.original_sample_rate)
-                i += 1
+            file_name = f"{track.name}.wav"
+            save_wav(mixture,
+                     os.path.join(self.paths[f'{stage}_wav_mix_path'], file_name),
+                     sample_rate=self.hparams.sample_rate)
+            save_wav(vocal,
+                     os.path.join(self.paths[f'{stage}_wav_vox_path'], file_name),
+                     self.hparams.sample_rate)
+            break
 
     def _download(self):
         headers = {'user-agent': 'Wget/1.16 (linux-gnu)'}
@@ -209,11 +202,11 @@ class MUSDBDataModule(pl.LightningDataModule):
             test_specs = pickle.load(f)
 
         self.train_data = SpectrogramDataset(self.paths['train_path'], train_specs, self.hparams.stft_frames,
-                                             self.hparams.stft_stride)
+                                             self.hparams.stft_stride, stage='train')
         self.val_data = SpectrogramDataset(self.paths['val_path'], val_specs, self.hparams.stft_frames,
-                                           self.hparams.stft_stride)
+                                           self.hparams.stft_stride, stage='val')
         self.test_data = SpectrogramDataset(self.paths['test_path'], test_specs, self.hparams.stft_frames,
-                                            self.hparams.stft_stride)
+                                            self.hparams.stft_stride, stage='test')
 
     def train_dataloader(self):
         my_collator = MyCollator(self.hparams.train_mask_threshold)
@@ -222,7 +215,7 @@ class MUSDBDataModule(pl.LightningDataModule):
 
     def val_dataloader(self):
         my_collator = MyCollator(self.hparams.train_mask_threshold)
-        return DataLoader(self.train_data, batch_size=self.hparams.batch_size, num_workers=6,
+        return DataLoader(self.val_data, batch_size=self.hparams.batch_size, num_workers=6,
                           collate_fn=my_collator)
 
     def test_dataloader(self):

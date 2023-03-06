@@ -34,12 +34,26 @@ def denormalize(S, min_level_db):
     return (np.clip(S, 0, 1) * -min_level_db) + min_level_db
 
 
-def spectrogram(wav, power, hop_size, fft_size, fmin, ref_level_db, mel_freqs, min_level_db, pcen=False):
+def preemphasis(x):
+    from nnmnkwii.preprocessing import preemphasis
+    return preemphasis(x)
+
+
+def inv_preemphasis(x):
+    from nnmnkwii.preprocessing import inv_preemphasis
+    return inv_preemphasis(x)
+
+
+def spectrogram(wav, power, hop_size, fft_size, fmin, ref_level_db, mel_freqs, min_level_db):
     stftS = librosa.stft(wav, n_fft=fft_size, hop_length=hop_size)
-    # if hparams.use_preemphasis:
-    #     wav = preemphasis(wav)
+    wav = preemphasis(wav)
     S = librosa.stft(wav, n_fft=fft_size, hop_length=hop_size)
     if mel_freqs is None:
         mel_freqs = librosa.mel_frequencies(S.shape[0], fmin=fmin)
     _S = librosa.perceptual_weighting(np.abs(S) ** power, mel_freqs, ref=ref_level_db)
     return normalize(_S - ref_level_db, min_level_db), stftS
+
+
+def inv_spectrogram(S, hop_size):
+    y = librosa.istft(S, hop_length=hop_size)
+    return inv_preemphasis(y)
