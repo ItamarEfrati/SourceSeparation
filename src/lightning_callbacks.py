@@ -249,7 +249,7 @@ class LogAudio(pl.Callback):
             pl_module.train()
 
 
-class LogEvalutionMetrics(pl.Callback):
+class LogEvaluationMetrics(pl.Callback):
     def __init__(self, every_n_epochs: int = 5):
         super().__init__()
 
