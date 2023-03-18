@@ -15,7 +15,6 @@ class SpectrogramDataset(Dataset):
         self.stft_stride = stft_stride
         self.offset = stft_frames // 2
         self.metadata = self.get_slices(spectrogram_info, stage)
-        # self.spectrogram = self._load_spectrogram()
 
     def get_slices(self, spectrogram_info, stage):
         metadata = []
@@ -59,16 +58,6 @@ class SpectrogramDataset(Dataset):
 
     def __len__(self):
         return len(self.metadata)
-
-    # def _load_spectrogram(self):
-    #     spec_dict = {}
-    #     for root, dirs, files in os.walk(self.mix_path):
-    #         for file in files:
-    #             spec_dict[file] = {
-    #                 'x': np.load(os.path.join(self.mix_path, file), mmap_mode='r'),
-    #                 'y': np.load(os.path.join(self.vox_path, file), mmap_mode='r')
-    #             }
-    #     return spec_dict
 
 
 class MyCollator(object):

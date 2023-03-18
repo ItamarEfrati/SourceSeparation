@@ -54,6 +54,6 @@ def spectrogram(wav, power, hop_size, fft_size, fmin, ref_level_db, mel_freqs, m
     return normalize(_S - ref_level_db, min_level_db), stftS
 
 
-def inv_spectrogram(S, hop_size):
-    y = librosa.istft(S, hop_length=hop_size)
+def inv_spectrogram(S, hop_size, length=None):
+    y = librosa.istft(S, hop_length=hop_size, length=length)
     return inv_preemphasis(y)

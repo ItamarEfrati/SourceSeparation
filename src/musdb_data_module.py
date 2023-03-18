@@ -38,7 +38,7 @@ class MUSDBDataModule(pl.LightningDataModule):
                  stft_frames=25,
                  stft_stride=1,
                  train_length=1024,
-                 batch_size: int = 512,
+                 batch_size: int = 1,
                  train_mask_threshold=0.5,
                  test_mask_threshold=0.1):
         super().__init__()
@@ -91,28 +91,29 @@ class MUSDBDataModule(pl.LightningDataModule):
 
     def _generate_specs(self, L, track, idx, mixture_path, vocal_path):
         mixture, vocal = self._load_samples(track)
-        mix_spec = spectrogram(mixture,
-                               power=self.hparams.mix_power_factor,
-                               hop_size=self.hparams.hop_size,
-                               fft_size=self.hparams.fft_size,
-                               fmin=self.hparams.fmin,
-                               ref_level_db=self.hparams.ref_level_db,
-                               mel_freqs=self.hparams.mel_freqs,
-                               min_level_db=self.hparams.min_level_db)[0][np.newaxis, :, :]
+        mix_mel_spec, _ = spectrogram(mixture,
+                                      power=self.hparams.mix_power_factor,
+                                      hop_size=self.hparams.hop_size,
+                                      fft_size=self.hparams.fft_size,
+                                      fmin=self.hparams.fmin,
+                                      ref_level_db=self.hparams.ref_level_db,
+                                      mel_freqs=self.hparams.mel_freqs,
+                                      min_level_db=self.hparams.min_level_db)
+        mix_mel_spec = mix_mel_spec[np.newaxis, :, :]
 
-        vox_spec = spectrogram(vocal,
-                               power=self.hparams.mix_power_factor,
-                               hop_size=self.hparams.hop_size,
-                               fft_size=self.hparams.fft_size,
-                               fmin=self.hparams.fmin,
-                               ref_level_db=self.hparams.ref_level_db,
-                               mel_freqs=self.hparams.mel_freqs,
-                               min_level_db=self.hparams.min_level_db)[0]
+        vox_mel_spec, _ = spectrogram(vocal,
+                                      power=self.hparams.mix_power_factor,
+                                      hop_size=self.hparams.hop_size,
+                                      fft_size=self.hparams.fft_size,
+                                      fmin=self.hparams.fmin,
+                                      ref_level_db=self.hparams.ref_level_db,
+                                      mel_freqs=self.hparams.mel_freqs,
+                                      min_level_db=self.hparams.min_level_db)
 
         spectrogram_id = f"spec{idx:06d}"
-        L.append((spectrogram_id, mix_spec.shape[2]))
-        np.save(os.path.join(mixture_path, spectrogram_id + ".npy"), mix_spec)
-        np.save(os.path.join(vocal_path, spectrogram_id + ".npy"), vox_spec)
+        L.append((spectrogram_id, mix_mel_spec.shape[2]))
+        np.save(os.path.join(mixture_path, spectrogram_id + ".npy"), mix_mel_spec)
+        np.save(os.path.join(vocal_path, spectrogram_id + ".npy"), vox_mel_spec)
 
     def _create_spectrogram(self, tracks, mix_path, vox_path, save_path):
         with Manager() as manager:
@@ -146,7 +147,6 @@ class MUSDBDataModule(pl.LightningDataModule):
             save_wav(vocal,
                      os.path.join(self.paths[f'{stage}_wav_vox_path'], file_name),
                      self.hparams.sample_rate)
-            break
 
     def _download(self):
         headers = {'user-agent': 'Wget/1.16 (linux-gnu)'}
